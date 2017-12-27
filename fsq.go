@@ -25,42 +25,47 @@ type interpreter struct {
 	funcs   map[string]func(reflect.Value) reflect.Value
 }
 
-func newInterpreter() *interpreter {
+func NewInterpreter(context interface{}) *interpreter {
 	return &interpreter{
-		globals: make(map[string]interface{}),
-		tag:     "json",
+		globals: make(map[string]reflect.Value),
+		funcs:   make(map[string]func(reflect.Value) reflect.Value),
+		context: reflect.ValueOf(context),
 	}
 }
 
-func (terp *interpreter) SetContext(value reflect.Value) error {
-	for value.Kind() == reflect.Ptr {
-		value = reflect.Indirect(value)
-	}
-	switch value.Kind() {
-	case reflect.Struct:
-		for i := 0; i < value.NumField(); i++ {
-			sf := value.Type().Field(i)
-			if sf.PkgPath != "" {
-				// unexported field
-				continue
-			}
-			t := value.Field(i)
-			key := sf.Name
-			if tag, ok := sf.Tag.Lookup(terp.tag); ok {
-				key = tag
-				if idx := strings.Index(tag, ","); idx != -1 {
-					key = tag[:idx]
-				}
-			}
-			terp.globals[key] = t.Addr().Interface()
-		}
-		return nil
-	case reflect.Map:
-		return fmt.Errorf("adding a map to globals supported yet")
-	default:
-		return fmt.Errorf("don't know what to do with %s", value.Kind())
-	}
-}
+// func (terp *interpreter) SetContext(value reflect.Value) error {
+// 	terp.context = value
+// }
+
+// func (terp *interpreter) SetContext(value reflect.Value) error {
+// 	for value.Kind() == reflect.Ptr {
+// 		value = reflect.Indirect(value)
+// 	}
+// 	switch value.Kind() {
+// 	case reflect.Struct:
+// 		for i := 0; i < value.NumField(); i++ {
+// 			sf := value.Type().Field(i)
+// 			if sf.PkgPath != "" {
+// 				// unexported field
+// 				continue
+// 			}
+// 			t := value.Field(i)
+// 			key := sf.Name
+// 			if tag, ok := sf.Tag.Lookup(terp.tag); ok {
+// 				key = tag
+// 				if idx := strings.Index(tag, ","); idx != -1 {
+// 					key = tag[:idx]
+// 				}
+// 			}
+// 			terp.globals[key] = t.Addr().Interface()
+// 		}
+// 		return nil
+// 	case reflect.Map:
+// 		return fmt.Errorf("adding a map to globals supported yet")
+// 	default:
+// 		return fmt.Errorf("don't know what to do with %s", value.Kind())
+// 	}
+// }
 
 // Wrapper around eval that handles errors
 func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
@@ -119,14 +124,25 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 	}
 	switch exp := exp.(type) {
 	case *ast.Ident:
-		v, ok := terp.globals[camel(exp.String())]
-		if !ok {
-			v, ok = terp.globals[exp.String()]
-			if !ok {
-				panic(fmt.Errorf("field \"%s\" not found", exp.String()))
-			}
+		if v, ok := terp.globals[exp.String()]; ok {
+			return v
 		}
-		return reflect.ValueOf(v)
+		context := terp.context
+
+		for context.Kind() == reflect.Ptr {
+			context = reflect.Indirect(context)
+		}
+
+		v := context.FieldByName(camel(exp.String()))
+		if v.IsValid() {
+			return v.Addr()
+		}
+
+		v = context.FieldByName(exp.String())
+		if v.IsValid() {
+			return v.Addr()
+		}
+		panic(fmt.Errorf("unknown field or label \"%s\"", exp.String()))
 
 	case *ast.SelectorExpr:
 		in := terp.eval(exp.X)
@@ -140,12 +156,12 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 			panic(fmt.Errorf("select field \"%s\" from type %s", s, in.Kind()))
 		}
 
-		f := in.FieldByName(s)
+		f = in.FieldByName(camel(s))
 		if f.IsValid() {
 			return f.Addr()
 		}
 
-		f = in.FieldByName(camel(s))
+		f := in.FieldByName(s)
 		if f.IsValid() {
 			return f.Addr()
 		}
@@ -264,12 +280,12 @@ func main() {
 	}
 	defer rl.Close()
 
-	terp := newInterpreter()
+	terp := NewInterpreter(fsshm)
 
-	err = terp.Globals(reflect.Indirect(reflect.Indirect(reflect.ValueOf(fsshm)).FieldByName("Fscom")).Addr())
-	if err != nil {
-		panic(err)
-	}
+	// err = terp.Globals(reflect.Indirect(reflect.Indirect(reflect.ValueOf(fsshm)).FieldByName("Fscom")).Addr())
+	// if err != nil {
+	// 	panic(err)
+	// }
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
