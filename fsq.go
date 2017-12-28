@@ -88,7 +88,7 @@ func (terp *interpreter) Global(label string, value interface{}) {
 	terp.globals[strings.TrimSpace(label)] = v
 }
 
-func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
+func (terp *interpreter) Eval(line string) (value reflect.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch r := r.(type) {
@@ -103,8 +103,7 @@ func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
 	}()
 
 	var exp ast.Expr
-
-	line := strings.TrimSpace(s)
+	line = strings.TrimSpace(line)
 
 	// TODO: not sure if this is really the right behavour
 	if line == "" {
@@ -119,21 +118,21 @@ func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
 		}
 
 		label := strings.TrimSpace(fields[0])
-		if strings.ContainsRune(label, '.') {
-			err = fmt.Errorf("labels can not contain '.'")
-		}
 		exp, err = parser.ParseExpr(fields[1])
 		if err != nil {
 			return
 		}
-		value = terp.eval(exp)
-		terp.globals[label] = value
-		return
+		terp.globals[label] = terp.eval(exp)
+		return reflect.Value{}, nil
+	}
+
+	if v, ok := terp.globals[line]; ok {
+		return v, nil
 	}
 
 	exp, err = parser.ParseExpr(line)
 	if err != nil {
-		return
+		return reflect.Value{}, err
 	}
 	value = terp.eval(exp)
 	return value, err
@@ -312,20 +311,25 @@ func main() {
 		if err != nil { // io.EOF
 			break
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+		for _, line = range strings.Split(line, ";") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
 
-		value, err := terp.Eval(line)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+			value, err := terp.Eval(line)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			if !value.IsValid() {
+				continue
+			}
 
-		err = encoder.Encode(value.Interface())
-		if err != nil {
-			fmt.Println(err)
+			err = encoder.Encode(value.Interface())
+			if err != nil {
+				fmt.Println(err)
+			}
 		}
 	}
 }
