@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 
 	"fs"
 )
+
+var history_path = filepath.Join(os.TempDir(), "fsqhistory")
 
 func cstr(in interface{}) string {
 	v := reflect.ValueOf(in)
@@ -50,6 +53,77 @@ func main() {
 
 	lr := liner.NewLiner()
 	defer lr.Close()
+
+	lr.SetCompleter(func(line string) (c []string) {
+		i := len(line) - 1
+		for i > 0 && line[i] != '.' && line[i] != '(' && line[i] != '[' {
+			i--
+		}
+		if i < 0 {
+			i = 0
+		}
+
+		expression := ""
+		prefix := line[:i]
+		search := line[i:]
+		if i > 0 {
+			// Trim off '.' '(' or '['
+			prefix = line[:i+1]
+			search = search[1:]
+
+			j := i - 1
+			nper := 0
+			nsqb := 0
+			for j > 0 && line[j] != '=' {
+				switch line[j] {
+				case '(':
+					nper--
+				case ')':
+					nper++
+				case '[':
+					nsqb--
+				case ']':
+					nsqb++
+				}
+				if nper < 0 || nsqb < 0 {
+					break
+				}
+
+				j--
+			}
+			if j < 0 {
+				j = 0
+			}
+
+			if i != j {
+				expression = line[j:i]
+				if j != 0 {
+					// Trim off '=' '(' or '['
+					expression = expression[1:]
+				}
+			}
+		}
+
+		// fmt.Printf("prefix = %q, search = %q, expression = %q", prefix, search, expression)
+
+		value, err := terp.Eval(fmt.Sprintf("ls(%s)", expression))
+		if err != nil {
+			return
+		}
+
+		names, ok := value.Interface().([]string)
+		if !ok {
+			return
+		}
+
+		for _, n := range names {
+			if strings.HasPrefix(n, search) {
+				c = append(c, prefix+n)
+			}
+		}
+		return
+	})
+
 	encoder := json.NewEncoder(os.Stdout)
 	// encoder.SetIndent("", " ")
 

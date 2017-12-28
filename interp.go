@@ -72,41 +72,47 @@ func NewInterpreter() *interpreter {
 		globals: make(map[string]reflect.Value),
 	}
 	// Useful builtin functions, that can interact with the interpreter
-	terp.globals["ls"] = reflect.ValueOf(func(in interface{}) []string {
+	terp.globals["ls"] = reflect.ValueOf(func(ins ...interface{}) []string {
 		children := make([]string, 0)
-		v := reflect.ValueOf(in)
-
-		for i := 0; i < v.NumMethod(); i++ {
-			m := v.Type().Method(i)
-			children = append(children, fmt.Sprintf("%s (%s)", m.Name, m.Type))
+		if len(ins) == 0 {
+			ins = append(ins, terp.globals)
 		}
 
-		for v.Kind() == reflect.Ptr {
-			v = reflect.Indirect(v)
-		}
+		for _, in := range ins {
+			v := reflect.ValueOf(in)
 
-		switch v.Kind() {
-		case reflect.Struct:
-
-			for i := 0; i < v.NumField(); i++ {
-				field := v.Type().Field(i)
-				name := field.Name
-				if terp.Tag != "" {
-					s, ok := field.Tag.Lookup(terp.Tag)
-					if !ok {
-						continue
-					}
-					name = s
-					if idx := strings.Index(s, ","); idx != -1 {
-						name = s[:idx]
-					}
-				}
-				children = append(children, name)
+			for i := 0; i < v.NumMethod(); i++ {
+				m := v.Type().Method(i)
+				children = append(children, m.Name)
 			}
-		case reflect.Map:
-			keys := v.MapKeys()
-			for _, key := range keys {
-				children = append(children, fmt.Sprintf("%s", key))
+
+			for v.Kind() == reflect.Ptr {
+				v = reflect.Indirect(v)
+			}
+
+			switch v.Kind() {
+			case reflect.Struct:
+
+				for i := 0; i < v.NumField(); i++ {
+					field := v.Type().Field(i)
+					name := field.Name
+					if terp.Tag != "" {
+						s, ok := field.Tag.Lookup(terp.Tag)
+						if !ok {
+							continue
+						}
+						name = s
+						if idx := strings.Index(s, ","); idx != -1 {
+							name = s[:idx]
+						}
+					}
+					children = append(children, name)
+				}
+			case reflect.Map:
+				keys := v.MapKeys()
+				for _, key := range keys {
+					children = append(children, fmt.Sprintf("%s", key))
+				}
 			}
 		}
 		return children
@@ -268,10 +274,6 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 
 		if f.Kind() != reflect.Func {
 			panic(fmt.Errorf("%s not a function or method", expfmt(exp.Fun)))
-		}
-
-		if f.Type().NumIn() != len(exp.Args) {
-			panic(fmt.Errorf("%q expects %d arguments", exp.Fun, f.Type().NumIn()))
 		}
 
 		in := make([]reflect.Value, len(exp.Args))
