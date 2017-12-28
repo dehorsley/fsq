@@ -374,6 +374,13 @@ func main() {
 				continue
 			}
 
+			if value.Kind() == reflect.Func && value.Type().NumIn() == 0 {
+				out := value.Call([]reflect.Value{})
+				if len(out) > 0 {
+					value = out[0]
+				}
+			}
+
 			err = encoder.Encode(value.Interface())
 			if err != nil {
 				fmt.Println(err)
