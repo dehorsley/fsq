@@ -257,33 +257,29 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 	}
 }
 
-func cstr(i interface{}) string {
-	v := reflect.ValueOf(i)
+func cstr(in interface{}) string {
+	v := reflect.ValueOf(in)
 	for v.Kind() == reflect.Ptr {
 		v = reflect.Indirect(v)
 	}
 
+	var s string
 	switch v.Kind() {
 	case reflect.Array, reflect.Slice:
 		if v.Type().Elem().Kind() != reflect.Uint8 {
 			panic("argument to \"str\" is not a string")
 		}
-		slice := v.Slice(0, v.Len()).Bytes()
-		i := 0
-		// trim off zero bytes
-		for slice[i] != 0 && i < len(slice) {
-			i++
-		}
-		return string(slice[0:i])
+		s = string(v.Slice(0, v.Len()).Bytes())
 	case reflect.String:
-		s := v.String()
-		i := 0
-		for s[i] != 0 && i < len(s) {
-			i++
-		}
-		return s[:i]
+		s = v.String()
+	default:
+		panic("argument to \"str\" is not a string")
 	}
-	panic("argument to \"str\" is not a string")
+	i := 0
+	for i < len(s) && s[i] != 0 {
+		i++
+	}
+	return s[:i]
 }
 
 func main() {
