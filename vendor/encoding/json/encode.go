@@ -577,14 +577,6 @@ var (
 )
 
 func stringEncoder(e *encodeState, v reflect.Value, opts encOpts) {
-	// Hack for C strings
-	if v.Kind() == reflect.Array || v.Kind() == reflect.Slice {
-		slice := v.Slice(0, v.Len()).Bytes()
-		i := 0
-		for ; slice[i] != 0 && i < len(slice)-1; i++ {
-		}
-		v = reflect.ValueOf(string(slice[0:i]))
-	}
 
 	if v.Type() == numberType {
 		numStr := v.String()
@@ -599,6 +591,21 @@ func stringEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 		e.WriteString(numStr)
 		return
 	}
+
+	// Hack for C strings. Not for general usage
+	var s string
+	if v.Kind() == reflect.Array || v.Kind() == reflect.Slice {
+		slice := v.Slice(0, v.Len()).Bytes()
+		s = string(slice)
+	} else {
+		s = v.String()
+	}
+	i := 0
+	for i < len(s) && s[i] != 0 {
+		i++
+	}
+	v = reflect.ValueOf(s[0:i])
+
 	if opts.quoted {
 		sb, err := Marshal(v.String())
 		if err != nil {
