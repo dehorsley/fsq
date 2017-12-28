@@ -249,8 +249,19 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		}
 
 		out := f.Call(in)
-		// TODO: how to handle multiple returns?
-		return out[0]
+
+		if len(out) == 0 {
+			return reflect.Value{}
+		}
+		if len(out) == 1 {
+			return out[0]
+		}
+
+		outiface := make([]interface{}, len(out))
+		for i, ov := range out {
+			outiface[i] = ov
+		}
+		return reflect.ValueOf(outiface)
 
 	default:
 		panic(fmt.Errorf("unknown type: %s", reflect.TypeOf(exp)))
