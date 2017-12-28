@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -12,72 +13,93 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/chzyer/readline"
 
 	"fs"
 )
 
-type interpreter struct {
-	context reflect.Value
-	globals map[string]reflect.Value
-	funcs   map[string]func(reflect.Value) reflect.Value
+func expfmt(node interface{}) string {
+	fset := token.NewFileSet()
+	var buf bytes.Buffer
+	err := format.Node(&buf, fset, node)
+	if err != nil {
+		panic(err)
+	}
+
+	return buf.String()
 }
 
-func NewInterpreter(context interface{}) *interpreter {
-	return &interpreter{
-		globals: make(map[string]reflect.Value),
-		funcs:   make(map[string]func(reflect.Value) reflect.Value),
-		context: reflect.ValueOf(context),
+func binaryop(op token.Token, l, r int64) int64 {
+	switch op {
+	case token.ADD:
+		return l + r
+	case token.SUB:
+		return l - r
+	case token.MUL:
+		return l * r
+	case token.QUO:
+		return l / r
+	case token.REM:
+		return l % r
+	default:
+		panic(fmt.Errorf("operation %s not supported", op))
 	}
 }
 
-// func (terp *interpreter) SetContext(value reflect.Value) error {
-// 	terp.context = value
-// }
+func fieldByTagName(v reflect.Value, tag, name string) reflect.Value {
+	if v.Kind() != reflect.Struct {
+		panic("not a struct")
+	}
 
-// func (terp *interpreter) SetContext(value reflect.Value) error {
-// 	for value.Kind() == reflect.Ptr {
-// 		value = reflect.Indirect(value)
-// 	}
-// 	switch value.Kind() {
-// 	case reflect.Struct:
-// 		for i := 0; i < value.NumField(); i++ {
-// 			sf := value.Type().Field(i)
-// 			if sf.PkgPath != "" {
-// 				// unexported field
-// 				continue
-// 			}
-// 			t := value.Field(i)
-// 			key := sf.Name
-// 			if tag, ok := sf.Tag.Lookup(terp.tag); ok {
-// 				key = tag
-// 				if idx := strings.Index(tag, ","); idx != -1 {
-// 					key = tag[:idx]
-// 				}
-// 			}
-// 			terp.globals[key] = t.Addr().Interface()
-// 		}
-// 		return nil
-// 	case reflect.Map:
-// 		return fmt.Errorf("adding a map to globals supported yet")
-// 	default:
-// 		return fmt.Errorf("don't know what to do with %s", value.Kind())
-// 	}
-// }
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Type().Field(i)
+		s, ok := field.Tag.Lookup(tag)
+		if !ok {
+			continue
+		}
+		if idx := strings.Index(s, ","); idx != -1 {
+			s = s[:idx]
+		}
+		if s == name {
+			return v.Field(i)
+		}
+	}
+	return reflect.Value{}
+}
 
-// Wrapper around eval that handles errors
+type interpreter struct {
+	globals map[string]reflect.Value
+	Tag     string
+}
+
+func NewInterpreter() *interpreter {
+	terp := &interpreter{
+		globals: make(map[string]reflect.Value),
+	}
+	return terp
+}
+
+func (terp *interpreter) Global(label string, value interface{}) {
+	if strings.ContainsRune(label, '.') {
+		panic(fmt.Errorf("labels can not contain '.'"))
+	}
+
+	// TODO handle functions and unaddressable things
+	v := reflect.ValueOf(value)
+	if v.CanAddr() {
+		terp.globals[strings.TrimSpace(label)] = v.Addr()
+		return
+	}
+	terp.globals[strings.TrimSpace(label)] = v
+}
+
 func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch r := r.(type) {
 			case runtime.Error:
 				panic(r)
-			case reflect.ValueError:
-				panic(r)
-			case string:
-				err = fmt.Errorf("%s", strings.TrimPrefix(r, "reflect: "))
 			case error:
 				err = r
 			default:
@@ -89,35 +111,41 @@ func (terp *interpreter) Eval(s string) (value reflect.Value, err error) {
 	var exp ast.Expr
 
 	line := strings.TrimSpace(s)
-	switch {
-	case line == ".":
+
+	// TODO: not sure if this is really the right behavour
+	if line == "" {
 		return reflect.ValueOf(terp.globals), nil
-	case strings.ContainsRune(line, '='):
+	}
+
+	if strings.ContainsRune(line, '=') {
 		fields := strings.Split(line, "=")
 		if len(fields) > 2 {
 			err = fmt.Errorf("error: multiple assignment not supported")
-			return value, err
+			return
 		}
 
-		lhs := strings.TrimSpace(fields[0])
+		label := strings.TrimSpace(fields[0])
+		if strings.ContainsRune(label, '.') {
+			err = fmt.Errorf("labels can not contain '.'")
+		}
 		exp, err = parser.ParseExpr(fields[1])
 		if err != nil {
 			return
 		}
 		value = terp.eval(exp)
-		terp.globals[lhs] = value
+		terp.globals[label] = value
 		return
-
-	default:
-		exp, err = parser.ParseExpr(line)
-		if err != nil {
-			return
-		}
-		value = terp.eval(exp)
-		return value, err
 	}
+
+	exp, err = parser.ParseExpr(line)
+	if err != nil {
+		return
+	}
+	value = terp.eval(exp)
+	return value, err
 }
 
+// This guy does the actual work
 func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 	if exp == nil {
 		return reflect.Value{}
@@ -127,46 +155,38 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		if v, ok := terp.globals[exp.String()]; ok {
 			return v
 		}
-		context := terp.context
-
-		for context.Kind() == reflect.Ptr {
-			context = reflect.Indirect(context)
-		}
-
-		v := context.FieldByName(camel(exp.String()))
-		if v.IsValid() {
-			return v.Addr()
-		}
-
-		v = context.FieldByName(exp.String())
-		if v.IsValid() {
-			return v.Addr()
-		}
-		panic(fmt.Errorf("unknown field or label \"%s\"", exp.String()))
+		panic(fmt.Errorf("unknown field or label %q", exp.String()))
 
 	case *ast.SelectorExpr:
-		in := terp.eval(exp.X)
+		recvr := terp.eval(exp.X)
 		s := exp.Sel.String()
 
-		for in.Kind() == reflect.Ptr {
-			in = reflect.Indirect(in)
+		f := recvr.MethodByName(s)
+		if f.IsValid() {
+			return f
 		}
 
-		if in.Kind() != reflect.Struct {
-			panic(fmt.Errorf("select field \"%s\" from type %s", s, in.Kind()))
+		for recvr.Kind() == reflect.Ptr {
+			recvr = reflect.Indirect(recvr)
 		}
 
-		f = in.FieldByName(camel(s))
+		if recvr.Kind() != reflect.Struct {
+			panic(fmt.Errorf("select field %q from type %q", s, recvr.Kind()))
+		}
+
+		if terp.Tag != "" {
+			f = fieldByTagName(recvr, terp.Tag, s)
+			if f.IsValid() {
+				return f.Addr()
+			}
+		}
+
+		f = recvr.FieldByName(s)
 		if f.IsValid() {
 			return f.Addr()
 		}
 
-		f := in.FieldByName(s)
-		if f.IsValid() {
-			return f.Addr()
-		}
-
-		panic(fmt.Errorf("\"%s\" has no field \"%s\"", exp.X, s))
+		panic(fmt.Errorf("%q has no field %q", exp.X, s))
 
 	case *ast.IndexExpr:
 		recvr := terp.eval(exp.X)
@@ -209,7 +229,7 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		}
 		i, err := strconv.Atoi(exp.Value)
 		if err != nil {
-			panic(fmt.Errorf("error parsing literal: %s", exp.Value))
+			panic(fmt.Errorf("error parsing int literal %q", exp.Value))
 		}
 		return reflect.ValueOf(i)
 
@@ -217,50 +237,60 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		l := terp.eval(exp.X)
 		r := terp.eval(exp.Y)
 		return reflect.ValueOf(binaryop(exp.Op, l.Int(), r.Int()))
+
+	case *ast.CallExpr:
+		f := terp.eval(exp.Fun)
+
+		if f.Kind() != reflect.Func {
+			panic(fmt.Errorf("%s not a function or method", expfmt(exp.Fun)))
+		}
+
+		if f.Type().NumIn() != len(exp.Args) {
+			panic(fmt.Errorf("%q expects %d arguments", exp.Fun, f.Type().NumIn()))
+		}
+
+		in := make([]reflect.Value, len(exp.Args))
+
+		for i := range in {
+			in[i] = terp.eval(exp.Args[i])
+		}
+
+		out := f.Call(in)
+		// TODO: how to handle multiple returns?
+		return out[0]
+
 	default:
-		panic(fmt.Errorf("unknown type: %s\n", reflect.TypeOf(exp)))
+		panic(fmt.Errorf("unknown type: %s", reflect.TypeOf(exp)))
 	}
 }
 
-func binaryop(op token.Token, l, r int64) int64 {
-	switch op {
-	case token.ADD:
-		return l + r
-	case token.SUB:
-		return l - r
-	case token.MUL:
-		return l * r
-	case token.QUO:
-		return l / r
-	case token.REM:
-		return l % r
-	default:
-		panic(fmt.Errorf("operation %s not supported", op))
+func cstr(i interface{}) string {
+	v := reflect.ValueOf(i)
+	for v.Kind() == reflect.Ptr {
+		v = reflect.Indirect(v)
 	}
-}
 
-// Because of Go's export rules, fs fields are converted to camel case by this routine
-func camel(s string) string {
-	var b bytes.Buffer
-	cap := true
-	for i, r := range s {
-		if r == '_' {
-			if i == 0 {
-				b.WriteString("X")
-				cap = false
-				continue
-			}
-			cap = true
-			continue
+	switch v.Kind() {
+	case reflect.Array, reflect.Slice:
+		if v.Type().Elem().Kind() != reflect.Uint8 {
+			panic("argument to \"str\" is not a string")
 		}
-		if cap {
-			b.WriteRune(unicode.ToUpper(r))
-			cap = false
-			continue
+		slice := v.Slice(0, v.Len()).Bytes()
+		i := 0
+		// trim off zero bytes
+		for slice[i] != 0 && i < len(slice) {
+			i++
 		}
-		b.WriteRune(r)
+		return string(slice[0:i])
+	case reflect.String:
+		s := v.String()
+		i := 0
+		for s[i] != 0 && i < len(s) {
+			i++
+		}
+		return s[:i]
 	}
-	return b.String()
+	panic("argument to \"str\" is not a string")
 }
 
 func main() {
@@ -269,23 +299,16 @@ func main() {
 		panic(err)
 	}
 
-	val := reflect.ValueOf(fsshm)
-	for i := 0; i < val.NumMethod(); i++ {
-		fmt.Println(val.Type().Method(i))
-	}
-
 	rl, err := readline.New("> ")
 	if err != nil {
 		panic(err)
 	}
 	defer rl.Close()
 
-	terp := NewInterpreter(fsshm)
-
-	// err = terp.Globals(reflect.Indirect(reflect.Indirect(reflect.ValueOf(fsshm)).FieldByName("Fscom")).Addr())
-	// if err != nil {
-	// 	panic(err)
-	// }
+	terp := NewInterpreter()
+	terp.Global("fs", fsshm)
+	terp.Global("str", cstr)
+	terp.Tag = "json"
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
