@@ -59,9 +59,6 @@ func main() {
 		for i > 0 && line[i] != '.' && line[i] != '(' && line[i] != '[' {
 			i--
 		}
-		if i < 0 {
-			i = 0
-		}
 
 		expression := ""
 		prefix := line[:i]
@@ -91,9 +88,6 @@ func main() {
 
 				j--
 			}
-			if j < 0 {
-				j = 0
-			}
 
 			if i != j {
 				expression = line[j:i]
@@ -103,8 +97,6 @@ func main() {
 				}
 			}
 		}
-
-		// fmt.Printf("prefix = %q, search = %q, expression = %q", prefix, search, expression)
 
 		value, err := terp.Eval(fmt.Sprintf("ls(%s)", expression))
 		if err != nil {
