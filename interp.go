@@ -116,9 +116,6 @@ func NewInterpreter() *interpreter {
 }
 
 func (terp *interpreter) Global(label string, value interface{}) {
-	if strings.ContainsRune(label, '.') {
-		panic(fmt.Errorf("labels can not contain '.'"))
-	}
 	v := reflect.ValueOf(value)
 	terp.globals[strings.TrimSpace(label)] = v
 }
