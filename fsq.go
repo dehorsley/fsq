@@ -19,6 +19,7 @@ import (
 	"fs"
 )
 
+// Format ast.Exp to Go code (poor-man's gofmt)
 func expfmt(node interface{}) string {
 	fset := token.NewFileSet()
 	var buf bytes.Buffer
@@ -26,7 +27,6 @@ func expfmt(node interface{}) string {
 	if err != nil {
 		panic(err)
 	}
-
 	return buf.String()
 }
 
@@ -49,7 +49,7 @@ func binaryop(op token.Token, l, r int64) int64 {
 
 func fieldByTagName(v reflect.Value, tag, name string) reflect.Value {
 	if v.Kind() != reflect.Struct {
-		panic("not a struct")
+		panic("fieldByTagName called on non-struct value")
 	}
 
 	for i := 0; i < v.NumField(); i++ {
@@ -84,13 +84,7 @@ func (terp *interpreter) Global(label string, value interface{}) {
 	if strings.ContainsRune(label, '.') {
 		panic(fmt.Errorf("labels can not contain '.'"))
 	}
-
-	// TODO handle functions and unaddressable things
 	v := reflect.ValueOf(value)
-	if v.CanAddr() {
-		terp.globals[strings.TrimSpace(label)] = v.Addr()
-		return
-	}
 	terp.globals[strings.TrimSpace(label)] = v
 }
 
