@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/chzyer/readline"
+	"github.com/peterh/liner"
 
 	"fs"
 )
@@ -43,25 +43,22 @@ func main() {
 		panic(err)
 	}
 
-	rl, err := readline.New("> ")
-	if err != nil {
-		panic(err)
-	}
-	defer rl.Close()
-
 	terp := NewInterpreter()
 	terp.Tag = "json"
 	terp.Global("fs", fsshm)
 	terp.Global("str", cstr)
 
+	lr := liner.NewLiner()
+	defer lr.Close()
 	encoder := json.NewEncoder(os.Stdout)
 	// encoder.SetIndent("", " ")
 
 	for {
-		line, err := rl.Readline()
+		line, err := lr.Prompt("> ")
 		if err != nil { // io.EOF
 			break
 		}
+		lr.AppendHistory(line)
 		for _, line = range strings.Split(line, ";") {
 			line = strings.TrimSpace(line)
 			if line == "" {
