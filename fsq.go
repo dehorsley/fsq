@@ -55,7 +55,11 @@ func main() {
 	defer lr.Close()
 
 	lr.SetCompleter(func(line string) (c []string) {
-		i := len(line) - 1
+		i := len(line)
+		if i > 0 {
+			i--
+		}
+
 		for i > 0 && line[i] != '.' && line[i] != '(' && line[i] != '[' {
 			i--
 		}
