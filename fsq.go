@@ -77,6 +77,47 @@ func NewInterpreter() *interpreter {
 	terp := &interpreter{
 		globals: make(map[string]reflect.Value),
 	}
+	// Useful builtin functions, that can interact with the interpreter
+	terp.globals["ls"] = reflect.ValueOf(func(in interface{}) []string {
+		children := make([]string, 0)
+		v := reflect.ValueOf(in)
+
+		for i := 0; i < v.NumMethod(); i++ {
+			m := v.Type().Method(i)
+			children = append(children, fmt.Sprintf("%s (%s)", m.Name, m.Type))
+		}
+
+		for v.Kind() == reflect.Ptr {
+			v = reflect.Indirect(v)
+		}
+
+		switch v.Kind() {
+		case reflect.Struct:
+
+			for i := 0; i < v.NumField(); i++ {
+				field := v.Type().Field(i)
+				name := field.Name
+				if terp.Tag != "" {
+					s, ok := field.Tag.Lookup(terp.Tag)
+					if !ok {
+						continue
+					}
+					name = s
+					if idx := strings.Index(s, ","); idx != -1 {
+						name = s[:idx]
+					}
+				}
+				children = append(children, name)
+			}
+		case reflect.Map:
+			keys := v.MapKeys()
+			for _, key := range keys {
+				children = append(children, fmt.Sprintf("%s", key))
+			}
+		}
+		return children
+	})
+
 	return terp
 }
 
