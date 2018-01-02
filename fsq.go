@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/constant"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -144,10 +145,20 @@ func main() {
 				continue
 			}
 
-			if value.Kind() == reflect.Func && value.Type().NumIn() == 0 {
-				out := value.Call([]reflect.Value{})
-				if len(out) > 0 {
-					value = out[0]
+			switch value.Kind() {
+			case reflect.Func:
+				if value.Type().NumIn() == 0 {
+					out := value.Call([]reflect.Value{})
+					if len(out) > 0 {
+						value = out[0]
+					}
+				}
+				fmt.Println(value.Type())
+				continue
+			case reflect.Struct:
+				if cv, ok := value.Interface().(constant.Value); ok {
+					fmt.Println(cv)
+					continue
 				}
 			}
 

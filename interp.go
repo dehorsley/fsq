@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 )
 
@@ -22,23 +22,6 @@ func expfmt(node interface{}) string {
 		panic(err)
 	}
 	return buf.String()
-}
-
-func binaryop(op token.Token, l, r int64) int64 {
-	switch op {
-	case token.ADD:
-		return l + r
-	case token.SUB:
-		return l - r
-	case token.MUL:
-		return l * r
-	case token.QUO:
-		return l / r
-	case token.REM:
-		return l % r
-	default:
-		panic(fmt.Errorf("operation %s not supported", op))
-	}
 }
 
 func fieldByTagName(v reflect.Value, tag, name string) reflect.Value {
@@ -224,12 +207,8 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		for recvr.Kind() == reflect.Ptr {
 			recvr = reflect.Indirect(recvr)
 		}
-		index := terp.eval(exp.Index)
-		for index.Kind() == reflect.Ptr {
-			index = reflect.Indirect(index)
-		}
 
-		return recvr.Index(int(index.Int())).Addr()
+		return recvr.Index(index(terp.eval(exp.Index))).Addr()
 
 	case *ast.SliceExpr:
 		recvr := terp.eval(exp.X)
@@ -237,37 +216,40 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 			recvr = reflect.Indirect(recvr)
 		}
 
-		low := terp.eval(exp.Low)
-		for low.Kind() == reflect.Ptr {
-			low = reflect.Indirect(low)
-		}
-		if !low.IsValid() {
-			low = reflect.ValueOf(int(0))
+		low := 0
+		if v := terp.eval(exp.Low); v.IsValid() {
+			low = index(v)
 		}
 
-		high := terp.eval(exp.High)
-		for high.Kind() == reflect.Ptr {
-			high = reflect.Indirect(high)
+		high := recvr.Len()
+		if v := terp.eval(exp.High); v.IsValid() {
+			high = index(v)
 		}
-		if !high.IsValid() {
-			high = reflect.ValueOf(recvr.Len())
-		}
-		return recvr.Slice(int(low.Int()), int(high.Int()))
+		return recvr.Slice(low, high)
 
 	case *ast.BasicLit:
-		if exp.Kind != token.INT {
-			panic(fmt.Errorf("only int literals are suported"))
+		if exp.Kind != token.INT && exp.Kind != token.FLOAT &&
+			exp.Kind != token.IMAG && exp.Kind != token.STRING &&
+			exp.Kind != token.CHAR {
+			panic(fmt.Errorf("unsupported literal of type %q", exp.Kind))
 		}
-		i, err := strconv.Atoi(exp.Value)
-		if err != nil {
-			panic(fmt.Errorf("error parsing int literal %q", exp.Value))
+
+		con := constant.MakeFromLiteral(exp.Value, exp.Kind, 0)
+		if con.Kind() == constant.Unknown {
+			panic(fmt.Errorf("error parsing literal %q", exp.Value))
 		}
-		return reflect.ValueOf(i)
+
+		return reflect.ValueOf(con)
 
 	case *ast.BinaryExpr:
-		l := terp.eval(exp.X)
-		r := terp.eval(exp.Y)
-		return reflect.ValueOf(binaryop(exp.Op, l.Int(), r.Int()))
+		x := constPromote(terp.eval(exp.X))
+		y := constPromote(terp.eval(exp.Y))
+
+		return reflect.ValueOf(constant.BinaryOp(x, exp.Op, y))
+
+	case *ast.UnaryExpr:
+		x := constPromote(terp.eval(exp.X))
+		return reflect.ValueOf(constant.UnaryOp(exp.Op, x, 0))
 
 	case *ast.CallExpr:
 		f := terp.eval(exp.Fun)
@@ -297,7 +279,69 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 		}
 		return reflect.ValueOf(outiface)
 
+	case *ast.ParenExpr:
+		return terp.eval(exp.X)
+
 	default:
 		panic(fmt.Errorf("unknown type: %s", reflect.TypeOf(exp)))
 	}
+}
+
+func isInt(v reflect.Value) bool {
+	return v.Kind() >= reflect.Int && v.Kind() <= reflect.Uint64
+}
+func isFloat(v reflect.Value) bool {
+	return v.Kind() >= reflect.Float32 && v.Kind() <= reflect.Float64
+}
+
+func isComplex(v reflect.Value) bool {
+	return v.Kind() >= reflect.Complex64 && v.Kind() <= reflect.Complex128
+}
+
+func index(v reflect.Value) int {
+	if !v.IsValid() {
+		panic("index called with empty value")
+	}
+
+	for v.Kind() == reflect.Ptr {
+		v = reflect.Indirect(v)
+	}
+	if isInt(v) {
+		return int(v.Int())
+	}
+
+	if c, ok := v.Interface().(constant.Value); ok {
+		if c.Kind() != constant.Int {
+			panic("index called with non int")
+		}
+		i, exact := constant.Int64Val(c)
+		if !exact {
+			panic("value cannot be represented as an index")
+		}
+		return int(i)
+	}
+
+	panic("index called with bad value")
+}
+
+func constPromote(v reflect.Value) constant.Value {
+	for v.Kind() == reflect.Ptr {
+		v = reflect.Indirect(v)
+	}
+	vc, ok := v.Interface().(constant.Value)
+	if ok {
+		return vc
+	}
+	switch {
+	case isInt(v):
+		return constant.MakeInt64(v.Int())
+	case isFloat(v):
+		return constant.MakeFloat64(v.Float())
+	case isComplex(v):
+		// TODO
+		panic("promoting complex numbers not implemented yet")
+	default:
+		panic(fmt.Errorf("unsuported promotion of type %q", v.Kind()))
+	}
+
 }
