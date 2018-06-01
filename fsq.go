@@ -11,7 +11,7 @@ import (
 
 	"github.com/peterh/liner"
 
-	"fs"
+	"vlbi.gsfc.nasa.gov/go/fs"
 )
 
 var history_path = filepath.Join(os.TempDir(), "fsqhistory")
