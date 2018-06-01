@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+// TODO: promote all native values to constant.Value and demoted to concrete types when used in calls
+
 // Format ast.Exp to Go code (poor-man's gofmt)
 func expfmt(node interface{}) string {
 	fset := token.NewFileSet()
@@ -134,7 +136,7 @@ func (terp *interpreter) Eval(line string) (value reflect.Value, err error) {
 	if strings.ContainsRune(line, '=') {
 		fields := strings.Split(line, "=")
 		if len(fields) > 2 {
-			err = fmt.Errorf("error: multiple assignment not supported")
+			err = fmt.Errorf("multiple assignment not supported")
 			return
 		}
 
@@ -236,7 +238,7 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 
 		con := constant.MakeFromLiteral(exp.Value, exp.Kind, 0)
 		if con.Kind() == constant.Unknown {
-			panic(fmt.Errorf("error parsing literal %q", exp.Value))
+			panic(fmt.Errorf("could not parse literal %q", exp.Value))
 		}
 
 		return reflect.ValueOf(con)
@@ -260,8 +262,8 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 
 		in := make([]reflect.Value, len(exp.Args))
 
-		for i := range in {
-			in[i] = terp.eval(exp.Args[i])
+		for i := range exp.Args {
+			in[i] = constDemote(terp.eval(exp.Args[i]))
 		}
 
 		out := f.Call(in)
@@ -275,7 +277,7 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 
 		outiface := make([]interface{}, len(out))
 		for i, ov := range out {
-			outiface[i] = ov
+			outiface[i] = ov.Interface()
 		}
 		return reflect.ValueOf(outiface)
 
@@ -290,6 +292,7 @@ func (terp *interpreter) eval(exp ast.Expr) reflect.Value {
 func isInt(v reflect.Value) bool {
 	return v.Kind() >= reflect.Int && v.Kind() <= reflect.Uint64
 }
+
 func isFloat(v reflect.Value) bool {
 	return v.Kind() >= reflect.Float32 && v.Kind() <= reflect.Float64
 }
@@ -324,6 +327,29 @@ func index(v reflect.Value) int {
 	panic("index called with bad value")
 }
 
+func constDemote(v reflect.Value) reflect.Value {
+	cv, ok := v.Interface().(constant.Value)
+	if !ok {
+		return v
+	}
+	switch cv.Kind() {
+	case constant.Bool:
+		return reflect.ValueOf(constant.BoolVal(cv))
+	case constant.String:
+		return reflect.ValueOf(constant.StringVal(cv))
+	case constant.Int:
+		i, _ := constant.Int64Val(cv)
+		return reflect.ValueOf(i)
+	case constant.Float:
+		f, _ := constant.Float64Val(cv)
+		return reflect.ValueOf(f)
+	case constant.Complex:
+		panic("complex numbers not supported yet")
+	default:
+		panic("cannot demote unknown constant")
+	}
+}
+
 func constPromote(v reflect.Value) constant.Value {
 	for v.Kind() == reflect.Ptr {
 		v = reflect.Indirect(v)
@@ -343,5 +369,4 @@ func constPromote(v reflect.Value) constant.Value {
 	default:
 		panic(fmt.Errorf("unsuported promotion of type %q", v.Kind()))
 	}
-
 }

@@ -138,7 +138,7 @@ func main() {
 
 			value, err := terp.Eval(line)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("error:", err)
 				continue
 			}
 			if !value.IsValid() {
