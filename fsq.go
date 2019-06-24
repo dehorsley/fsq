@@ -9,9 +9,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/nvi-inc/fsgo"
 	"github.com/peterh/liner"
-
-	"vlbi.gsfc.nasa.gov/go/fs"
 )
 
 var history_path = filepath.Join(os.TempDir(), "fsqhistory")
