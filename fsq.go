@@ -116,7 +116,7 @@ func help() {
 }
 
 func main() {
-	fsshm, err := fs.NewFieldSystem()
+	fsshm, err := fs.Attach()
 
 	if err != nil {
 		fmt.Println("error conencting to the FS:", err)
